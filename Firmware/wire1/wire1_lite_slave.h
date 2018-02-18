@@ -1,1 +1,1 @@
-void wire1_listener();
+char wire1_listener();

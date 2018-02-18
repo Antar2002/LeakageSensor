@@ -23,13 +23,27 @@
 #define		HACK_LED_PORT			PORTC
 #define		HACK_LED_PIN			PC0
 
+// Пин, показывающий, есть ли внешнее питание
+// Если есть внешнее питание - не спим
+#define		EXTERNAL_POWER_DDR		DDRC
+#define		EXTERNAL_POWER_PORT		PORTC
+#define		EXTERNAL_POWER_PIN		PINC
+#define		EXTERNAL_POWER			PC1
+
+#define		WIRE1_ADDR_DDR		DDRD
+#define		WIRE1_ADDR_PORT		PORTD
+#define		WIRE1_ADDR_PIN		PIND
+#define		WIRE1_ADDR_1		PD6
+#define		WIRE1_ADDR_2		PD7
+
 
 //#define		IMPULS_COUNT	30			// Кол-во периодов частоты при замере
 #define		IMPULS_MES_TIME	100			// Кол-во переполнений таймера, в течение которого буду считаться импульсы
 // 1/6510,4Hz = 0,0001536 сек * 100 = 0,01536 сек
 
 #define		MES_COUNT		10			// Кол-во замеров частоты для усреднения
-#define		TRESHOLD		0.05		// Процент изменения фоновой частоты, обозначающий тревогу
+#define		TRESHOLD		5			// Процент изменения фоновой частоты, обозначающий тревогу
+//#define		TRESHOLD		0.05
 #define		ALARM_MIN_CNT	30			// Кол-во превышений, после которого объявляется тревога (около 6 сек)
 
 #define		TIMER			250			// Период переполнения Timer0 (256-6; OVF = 6510,4Hz)
@@ -40,6 +54,8 @@
 
 #define		LED_ALARM_PULSE	3000			// Период мигания светодиода при тревоге (в переполнениях Timer0)
 #define		ALARM_IGNORE_TIME	2		// Время игнорирования тревоги после ее сброса выручную (в сек * 4)
+#define		MAX_ALARM_TIME		150		// Максимальная продолжительность игнала тревоги (в сек * 4)
+#define		ALARM_TIME_LIMIT	2		// Ограничение продолжительности подачи сигнала тревоги (в сек * 4)
 
 #define 	NRF_IRQ 		PD3			// Прерывание от NRF24L01
 #define 	buffersize 		mirf_PAYLOAD
@@ -65,15 +81,15 @@ char modeChanged = 0;		// Флаг смены режима. Как только кто-то меняет режим - вз
 char measureCnt = 0;		// Счетчик замеров частоты. При измерении частоты текущее значение (curFrequency) усредняется пока тикает этот счетчик.
 char freqUpdated = 0;		// Флаг/признак, что пришло новое измерение частоты
 
-uint16_t tmpFrequency = 0;
 uint16_t lastFrequency = 0;
 uint16_t defaultFrequency = 0;
 
-int timer0OvfSecCnt = 0;	// Счетчик переполнений Timer0 для отсчета секунд
+//int timer0OvfSecCnt = 0;	// Счетчик переполнений Timer0 для отсчета секунд
 
 char alarmCnt = 0;			// Счетчик превышений порога фоновой частоты
-int alarmIgnoreCnt = 0;		// Счетчик секунд игнорирования тревоги
+int alarmIgnoreCnt = 0;		// Счетчик времени игнорирования тревоги (тикает в watchdog)
 char pressedForResetAlarm = 0; // Флаг/признак того, что кнопку нажимали, чтобы сбросить тревогу
+int alarmTimeCnt = 0;		// Счетчик времени тревоги (тикает в watchdog)
 
 int btnNoiseTimer = 0;
 char btnPressed = 0;
@@ -105,10 +121,33 @@ int addressRequestPause = 0;
 char sendInProgress = 0;
 char dataReceived = 0;
 
+char wire1_slaves = 0;			// Маска подключенных 1-wire подчиненных
+char wire1_last_status = 0;		// Последний статус, полученный от 1-wire подчиненных (если все нули - протечки нет)
+
+char hasExternalPower = 0;	// Флаг того, что есть внешнее питание
+
+char treshold;				// Разница между нормой и текущим уровнем, при которой будет тревога
+int min_bat_level;			// Минимальный уровень батареи, после которого будет сигнал о необходимости замены
+int alarm_ignore_time; 		// Время, на которое отключается тревога при наличии сигнала с сенсора (в сек * 4)
+int alarm_time_limit;		// Продолжительность сигнала тревоги (в сек * 4). Если тревога длится это время - она будет отключена на alarm_ignore_time
+
+char canSendStatus = 0;
+char canSendPower = 0;
+
+char test = 0;
+
+
+// Function declarations
+
 void prepareStatus(uint8_t *sendBuf);
 void sendStatus();
 int initRadioAddress();
 
-char wire1_slaves = 0;
+void ignoreAlarm();
 
-char test = 0;
+void startLed(int cycles, int ledCnt);
+
+void readParamsFromMem();
+void setParams(uint8_t *data);
+void verifyParams();
+void saveParams();

@@ -5,13 +5,13 @@
 #include "wire1_shared.h"
 #include "wire1_lite_slave.h"
 
-void wire1_listener(){
+char wire1_listener(){
 
 	char sigLength;
 
 	// If line is "1" do nothing
 	if(WIRE1_PIN & _BV(WIRE1))
-		return;
+		return 0xFF;
 
 	cli();
 	WIRE1_TIMER_CNT = 0;
@@ -24,7 +24,7 @@ void wire1_listener(){
 
 	// If this is not "reset" (480uS) - exit
 	if(sigLength<147 || sigLength>153)
-		return;
+		return 0xFF;
 
 	// Send "present"
 	WIRE1_PORT_TO_SEND;
@@ -58,7 +58,7 @@ void wire1_listener(){
 	}
 
 	if(sigLength>=27)
-		return;
+		return 0xFF;
 
 /*for(i=0;i<8;i++){
 	_delay_us(50);
@@ -74,16 +74,8 @@ void wire1_listener(){
 	}
 }*/
 
+	return res;
 
-	// If this is "set default" command (check with reversed value)
-	if(res==0b10100110){
-		sendByteSlave(~wire1_address);
-	}
-
-	// If this is "check alarm state" command (check with reversed value)
-	if(res==0b00000000){
-		sendByteSlave(wire1_address);
-	}
 }
 
 void sendByteSlave(char resp){

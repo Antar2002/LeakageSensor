@@ -36,7 +36,7 @@
 #define mirf_ENABLED_P4 0
 #define mirf_ENABLED_P5 0
 
-#define mirf_USE_IRQ
+#define mirf_USE_IRQ 1
 
 #define mirf_CSN_hi PORTB |=  (1<<CSN);
 #define mirf_CSN_lo PORTB &= ~(1<<CSN);

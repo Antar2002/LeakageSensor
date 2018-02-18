@@ -277,7 +277,7 @@ void mirf_write(uint8_t *data)
 	mirf_CE_lo;
 
 	//wait for the transmission to stop
-	#ifndef mirf_USE_IRQ
+	#if mirf_USE_IRQ == 0
 		uint8_t breaked = 0;
 		uint8_t tmp = 0;
 		int timeout = 0;
