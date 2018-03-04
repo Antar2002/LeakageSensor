@@ -47,6 +47,8 @@
 #define mirf_setTX mirf_write_register(CONFIG, mirf_CONFIG | ( (1<<PWR_UP) | (0<<PRIM_RX) ) )
 #define mirf_setRX mirf_write_register(CONFIG, mirf_CONFIG | ( (1<<PWR_UP) | (1<<PRIM_RX) ) )
 
+#define mirf_power_down mirf_write_register(CONFIG, mirf_CONFIG )
+
 
 extern void spi_init();
 extern uint8_t spi_writeread (uint8_t data);
@@ -73,5 +75,7 @@ extern void mirf_flush_rx();
 extern void afterWriteData(uint8_t status);
 
 extern void mirf_reset();
+extern void mirf_reset_tx();
+extern char mirf_is_available();
 
 #endif /* _MIRF_H_ */

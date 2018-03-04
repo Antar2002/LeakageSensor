@@ -6,7 +6,7 @@
 	2 - замер текущей емкости
 	3 - запрос адреса
 */
-char mode;
+static volatile char mode;
 
 #define buffersize mirf_PAYLOAD
 uint8_t buffer[buffersize];
@@ -14,4 +14,9 @@ uint8_t buffer[buffersize];
 extern char dev_address[2];
 extern char noAddress;
 
-int hackLedCnt;
+extern char treshold;				// –азница между нормой и текущим уровнем, при которой будет тревога
+extern int min_bat_level;			// ћинимальный уровень батареи, после которого будет сигнал о необходимости замены
+extern int alarm_ignore_time; 		// ¬рем€, на которое отключаетс€ тревога при наличии сигнала с сенсора (в сек * 4)
+extern int alarm_time_limit;		// ѕродолжительность сигнала тревоги (в сек * 4). ≈сли тревога длитс€ это врем€ - она будет отключена на alarm_ignore_time
+
+volatile int hackLedCnt;

@@ -300,10 +300,14 @@ void mirf_write(uint8_t *data)
 }
 
 void afterWriteData(uint8_t status){
-	//reset OBSERVE_TX
 	//if(breaked == 1)
-	if(status & _BV(MAX_RT))
-		mirf_write_register(RF_CH, mirf_CH);
+	if(status & _BV(MAX_RT)){
+		//reset OBSERVE_TX
+		if((mirf_read_register(OBSERVE_TX)>>4)==15)
+			mirf_write_register(RF_CH, mirf_CH);
+		// remove unsended packet (and all other packets) from TX FIFO
+		mirf_flush_tx();
+	}
 
 	//reset registers
 	mirf_write_register(mirf_read_register(STATUS), (1<<TX_DS)|(1<<MAX_RT));
@@ -338,4 +342,16 @@ void mirf_flush_rx()
 
 void mirf_reset(){
 	mirf_write_register(STATUS, (1<<TX_DS)|(1<<MAX_RT)|(1<<RX_DR));
+}
+
+void mirf_reset_tx(){
+	mirf_write_register(STATUS, (1<<TX_DS)|(1<<MAX_RT));
+}
+
+char mirf_is_available(){
+	return mirf_read_register(SETUP_AW);
+}
+
+void mirf_power_up(){
+	mirf_write_register(CONFIG, mirf_read_register(CONFIG) | (1<<PWR_UP));
 }

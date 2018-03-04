@@ -1,5 +1,6 @@
-//#define UART_ENABLED;
+//#define UART_ENABLED
 #define WIRE1_DISABLED
+//#define NRF_DISABLED
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -11,39 +12,54 @@
 #include <util/delay.h>
 #include "LeakageSensor.h"
 //#include <util/delay.h>
+
 #ifdef UART_ENABLED
 #include "uart.h"
 #endif
+
+#ifndef NRF_DISABLED
 #include "nrf24/mirf.h"
 #include "nrf24/nRF24L01.h"
+#endif
+
 #include "addressFn.h"
+
 #ifndef WIRE1_DISABLED
 #include "wire1/wire1_lite.h"
 #endif
+
+#include "paramsFn.h"
+//#include "txQueueFn.h"
+#include "uartFn.h"
 #include "shared.h"
-
-
-EEMEM	uint8_t 	treshold_stored = TRESHOLD;
-EEMEM	uint16_t 	min_bat_level_stored = MIN_BAT_LEVEL;
-EEMEM	uint16_t 	alarm_ignore_time_stored = ALARM_IGNORE_TIME;
-EEMEM	uint16_t 	alarm_time_limit_stored = ALARM_TIME_LIMIT;
 
 
 #define UART_BAUD_RATE 56000
 #define UART_RX_BUFFER_SIZE 40
 #define UART_TX_BUFFER_SIZE 40
-char uartData[18];
-char res[18];
+
+uint8_t mcusr_mirror __attribute__ ((section (".noinit")));
 
 
-/*ISR(TIMER1_CAPT_vect)   
+void get_mcusr(void) \
+  __attribute__((naked)) \
+  __attribute__((section(".init3")));
+void get_mcusr(void)
 {
-	freqCnt++;
-}*/
+	mcusr_mirror = MCUSR;
+	MCUSR = 0;
+	wdt_disable();
+}
 
-/*ISR(TIMER1_OVF_vect){
-	ovfCnt++;
-}*/
+
+ISR(TIMER1_CAPT_vect)   
+{
+//	freqCnt++;
+}
+
+ISR(TIMER1_OVF_vect){
+//	ovfCnt++;
+}
 
 ISR(TIMER0_OVF_vect)
 {
@@ -58,6 +74,13 @@ ISR(TIMER0_OVF_vect)
 		impulsTimerCnt = IMPULS_MES_TIME;
 		freqUpdated = 1;
 	}
+
+	needHandleTimer0 = 1;
+
+	TCNT0 = TIMER;
+}
+
+void handleTimer0(){
 
 	// Подавление дребезга кнопки
 	if(btnNoiseTimer>0){
@@ -87,7 +110,7 @@ ISR(TIMER0_OVF_vect)
 	// Если сейчас состояние тревоги или низкий уровень заряда батареи	
 	if((alarmCnt>ALARM_MIN_CNT && alarmIgnoreCnt==0) || sndCnt>0){
 		sndFreqCnt++;
-		if(sndFreqCnt>4){
+		if(sndFreqCnt>2){
 			BUZZER_PORT ^= _BV(BUZZER_PIN);
 			sndFreqCnt = 0;
 		}
@@ -111,26 +134,31 @@ ISR(TIMER0_OVF_vect)
 	}
 	else{
 		// Считать время свечения диода только, если счетчик меньше 60 000. Иначе его можно включать и вылкючать извне
-		if(led_cnt < 60000)
+		if(led_cnt < ENDLESS_LED_PULSE)
 			led_cnt--;
 	}
 
-	if(hackLedCnt>0){
+/*	if(hackLedCnt>0){
 		HACK_LED_PORT |= _BV(HACK_LED_PIN);
-		hackLedCnt--;
+		if(hackLedCnt < ENDLESS_LED_PULSE)
+			hackLedCnt--;
 	}
 	else{
 		HACK_LED_PORT &= ~_BV(HACK_LED_PIN);
-	}
+	}*/
 
 	if(addressRequestPause>0)
 		addressRequestPause--;
 
-	TCNT0 = TIMER;
+	if(txPauseCnt>0)
+		txPauseCnt--;
+
+	if(txTimeoutCnt>0)
+		txTimeoutCnt--;
 }
 
 // Обработка кнопки
-ISR (INT0_vect)
+ISR(INT0_vect)
 {
 	// Кнопку нажали
 	if(~BUTTON_PIN & _BV(BUTTON)){
@@ -164,14 +192,22 @@ ISR (INT0_vect)
 ISR (WDT_vect)
 {
 
+	notMeasuredCnt++;
+
+	needHandleWatchdog = 1;
+
 	WDTCSR |= _BV(WDIE);
+
+}
+
+void handleWatchDog(){
 
 	// Если сейчас идет период игнорирования тревоги - уменьшить оставшее время игнорирования на 1
 	if(alarmIgnoreCnt>0){
 		alarmIgnoreCnt--;
 	}
 
-	// Если идет сигнал тервоги - считать продожительность его подачи
+	// Если идет сигнал тревоги - считать продожительность его подачи
 	if(alarmTimeCnt>0 && alarmTimeCnt<MAX_ALARM_TIME){
 		alarmTimeCnt++;
 		// Если продолжительность больше заданной - отключить сигнал на время, заданное alarm_ignore_time
@@ -180,7 +216,7 @@ ISR (WDT_vect)
 		}
 	}
 
-	sleepsCnt++;
+	/*sleepsCnt++;
 	// Каждую минуту обнулять
 	if(sleepsCnt>1){
 		// Если сейчас не заняты обработкой тревоги, посмотреть напряжение на батарее
@@ -188,6 +224,9 @@ ISR (WDT_vect)
 			sleepsCnt = 0;
 			ADCSRA |= (1<<ADSC);
 		}
+	}*/
+	if(!adcUpdated){
+		ADCSRA |= (1<<ADSC);
 	}
 
 	// Если низкий заряд, считать паузу между сигналами о низком заряде
@@ -196,12 +235,14 @@ ISR (WDT_vect)
 
 }
 
+
 ISR(ADC_vect) //ADC End of Conversion interrupt 
 {
 	adc_data = ADC>>2; //read 8 bit value 
 	adcUpdated = 1;
 }
 
+#ifndef NRF_DISABLED
 ISR(INT1_vect)	// Interupt from NRF
 {
 
@@ -210,10 +251,8 @@ ISR(INT1_vect)	// Interupt from NRF
 test = status;
 #endif
 //hackLedCnt = 200;
+	// Если что-то пришло из эфира
 	if(status & (1<<RX_DR)){
-hackLedCnt = 1000;
-		//mirf_write_register(STATUS, (1<<RX_DR));
-		//mirf_flush_rx();
 		if(dataReceived == 0){
 			mirf_read(buffer);
 			dataReceived = 1;
@@ -224,13 +263,30 @@ hackLedCnt = 1000;
 //		mirf_flush_rx();
 //		sendStatus();
 	}
+	// Если это было окончание передачи
+	// TX_DS - передача прошла успешно
+	// MAX_RT - передача провалилась (в TX FIFO остались непереданные данные)
 	else if((status & (1<<TX_DS)) || (status & (1<<MAX_RT))){
+		txQuality = mirf_read_register(OBSERVE_TX);
+		// Если пакет так и не удалось передать - просигнализировать об этом миганием
+/*		if(status & (1<<MAX_RT)){
+			for(int i=0; i< (txQuality>>4); i++){
+				LED_PORT |= _BV(LED_PIN);
+				_delay_ms(1000);
+				LED_PORT &= ~_BV(LED_PIN);
+				_delay_ms(500);
+			}
+		}*/
+		// Почистить все в NRF, чтоб можно было передавать дальше
 		afterWriteData(status);
+
 		sendInProgress = 0;
+		txTimeoutCnt = 0;
 	}
 	mirf_flush_rx();
 	mirf_reset();
 }
+#endif
 
 
 char measureFrequency(){
@@ -269,6 +325,8 @@ void portsInit()
 	SENSOR_DDR &= ~_BV(SENSOR);
 	SENSOR_PORT |= _BV(SENSOR);
 
+	POWER555_DDR |= _BV(POWER555_PIN);
+	POWER555_PORT |= _BV(POWER555_PIN);
 
 	// Initialize LED (PC5)
 	LED_DDR |= _BV(LED_PIN);
@@ -293,6 +351,9 @@ void portsInit()
 	// wire-1 address
 	WIRE1_ADDR_DDR &= ~(_BV(WIRE1_ADDR_1) | _BV(WIRE1_ADDR_2));
 	WIRE1_ADDR_PORT |= _BV(WIRE1_ADDR_1) | _BV(WIRE1_ADDR_2);
+
+	WIRE1_POWER_DDR |= _BV(WIRE1_POWER);
+	WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
 #endif
 }
 
@@ -300,15 +361,13 @@ void timersInit()
 {
 	//Init Timer 0
 	// Mega8 TCCR0
-	TCCR0B &= 0x00;
 	//TCCR0 |= (1<<CS00);	// (8 MHz / 256 = 31250)
 	//TCCR0 |= (1<<CS01);	// /8 (1 MHz / 256 = 3906,25)
 	//TCCR0 |= (1<<CS01) | (1<<CS00);	// /64 (156.250 kHz / 256 = 610,3515625)
 	// Mega8 TCCR0 |= (1<<CS02);		// /256 (39,0625 kHz / 256 = 152,588)
-	TCCR0B |= (1<<CS02);		// /256 (39,0625 kHz / 256 = 152,588)
+	TCCR0B = (1<<CS02);		// /256 (39,0625 kHz / 256 = 152,588)
 	//TCCR0B |= (1<<CS02) | (1<<CS00);	// /1024 (9375 Hz)
 	TCNT0 = TIMER;
-	TIMSK0 = 0x00;
 	TIMSK0 = (1<<TOIE0); // Включить прерывание по переполнению таймера
 	// Mega8 TIMSK |= (1<<TICIE1) | (1<<TOIE1) | (1<<TOIE0);		// Включить прерывание по переполнению таймера и по внешнему сигналу
 	//TIMSK |= (1<<TOIE0);
@@ -316,13 +375,12 @@ void timersInit()
 
 	// Init timer 1 (for sensor frequency measuring)
 	TCCR1A = 0x00;
-	TCCR1B = 0x00;
 	//TCCR1B = (1<<ICNC1) | (1<<ICES1) | (1<<CS10);		// For capture signal using Input Capture Unit of Timemr1
 	TCCR1B = (1<<CS12) | (1<<CS11) | (1<<CS10);
 	TCNT1=0x00;
 	//ICR1=0x00;
 	TIMSK1 = 0x00;
-	TIMSK1 |= (1<<ICIE1) | (1<<TOIE1);		// Включить прерывание по переполнению таймера и по внешнему сигналу
+	//TIMSK1 |= (1<<ICIE1) | (1<<TOIE1);		// Включить прерывание по переполнению таймера и по внешнему сигналу
 }
 
 void WDT_Init()
@@ -330,6 +388,10 @@ void WDT_Init()
 	wdt_reset();
 	wdt_enable(WDTO_4S);
 	WDTCSR |= _BV(WDIE);
+	//WDTCSR = _BV(WDCE) | _BV(WDE);
+	//WDTCSR = 0;
+
+	//WDTCSR = _BV(WDIE) | _BV(WDP3);		// Enable reset, interrupt and prescaler is 4s
 }
 
 void ADC_init() 
@@ -354,7 +416,16 @@ void wire1_addr_init(){
 int main(void)
 {
 
+	// Save reset source and disable watchdog ASAP
+	//get_mcusr();
+	/*mcusr_mirror = MCUSR;
+	MCUSR = 0;
+	wdt_disable();
+	notMeasuredCnt = 0;*/
+
 	portsInit();
+
+	startLed(ENDLESS_LED_CYCLE, ENDLESS_LED_PULSE);
 
 	cli();
 
@@ -363,25 +434,43 @@ int main(void)
 	uart_init(UART_BAUD_SELECT(UART_BAUD_RATE,F_CPU) );
 #endif
 
+	// Init NRF24
+	mirf_init();
+	_delay_ms(50);
+	isMirfAvailable = mirf_is_available();
+
 	// Init INT0 & INT1
 	//MCUCR &= ~_BV(ISC00) & ~_BV(ISC01);
 	//MCUCR |= _BV(ISC00) | _BV(ISC01);
 	//MCUCR &= _BV(ISC00) & _BV(ISC01);	// Low level rise interrupt
 	//GIMSK |= _BV(INT0);
 	EICRA = 0x00;
-	EICRA |= _BV(ISC00) | _BV(ISC11);	// Any level of INT0 change raise interrupt, falling edge on INT1 raise interupt
+	//EICRA |= _BV(ISC00) | _BV(ISC11);	// Any level of INT0 change raise interrupt, falling edge on INT1 raise interupt
+	EICRA |= _BV(ISC00);	// Any level of INT0 change raise interrupt, low level on INT1 raise interupt (ISC11=0 and ISC10=0)
 	EIMSK = 0x00;
-	EIMSK |= _BV(INT0) | _BV(INT1);
 
+#ifndef NRF_DISABLED
+	if(isMirfAvailable)
+		EIMSK |= _BV(INT0) | _BV(INT1);
+	else
+		EIMSK |= _BV(INT0);
+#else
+	EIMSK |= _BV(INT0);
+#endif
+
+	// Disable TWI
+	TWCR &= ~_BV(TWEN);
 
 	timersInit();
 
+	// Disable Analog Comparator
+	ACSR &= ~_BV(ACIE);
+	ACSR |= _BV(ACD);
+	DIDR1 = 0xFF;
+
 	ADC_init();
+	DIDR0 = 0xFF;
 
-	WDT_Init();
-
-	mirf_init();
-	_delay_ms(50);
 
 #ifndef WIRE1_DISABLED
 	wire1_init();
@@ -390,74 +479,99 @@ int main(void)
 
 	sei();
 
-//	hackLedCnt = 900;
+#ifndef NRF_DISABLED
+	if(isMirfAvailable){
+		mirf_config();
+		mirf_set_rxaddr(0, rxaddr);
+		mirf_set_txaddr(txaddr);
 
-	mirf_config();
-	mirf_set_rxaddr(0, rxaddr);
-	mirf_set_txaddr(txaddr);
+		// Инициализировать адрес устройства в радиоканале
+		initAddress();
+		// Адрес устройства
+		sendBuf[0] = dev_address[0];
+		sendBuf[1] = dev_address[1];
 
-// Инициализировать адрес устройства в радиоканале
-	initAddress();
+	}
+#else
+	SPCR &= ~_BV(SPE);
+#endif
 
 	// Загрузить параметры из памяти
 	readParamsFromMem();
 
 	set_sleep_mode(SLEEP_MODE_PWR_DOWN);
 
-	// Оповестить мир, что мы включились
-#ifdef UART_ENABLED
-	uart_puts("Leakage Sensor v0.1\r\r");
-#endif
-	startLed(1, 450);
-/**	LED_PORT |= _BV(LED_PIN);
-	_delay_ms(500);
-	LED_PORT &= ~_BV(LED_PIN);
-	_delay_ms(500);*/
+	WDT_Init();
 
+	// Оповестить мир, что мы включились
+	URAT_PRINT_STR("Leakage Sensor v0.1\r\r");
+
+	cli();
+	led_cnt = 0;
+	//LED_PORT &= ~_BV(LED_PIN);
 	
 	// Переменные иницализируются при объявлении
-	mode = 1;
 /*	freqImpulsFlag = 0;
 	curFrequency = 0;*/
 	sendInProgress = 0;
-	dataReceived = 0;
+//	txQueue_clear();
+	txPauseCnt = 0;
+	txTimeoutCnt = 0;
 
+	adcUpdated = 0;
+	dataReceived = 0;
+	canSleep = 0;
+
+	mode = 1;
 	modeChanged = 1;
+
+	sei();
+
+	// Если это была перезагрузка - сообщить об этом по радио и сбросить флаги
+	if(mcusr_mirror){
+		//LED_PORT &= ~_BV(LED_PIN);
+		prepareResetStatus(mcusr_mirror);
+		startSend();
+
+#ifdef UART_ENABLED
+		uart_puts("Reset source: ");
+		uart_putc(mcusr_mirror);
+		uart_putc('\r');
+#endif
+	}
+
 
 	while(1)
 	{
-#ifdef UART_ENABLED
-if(test!=0){
-uart_putc(test);
-uart_putc('\r');
-test = 0;
-}
-#endif
-		/*// Обработать нажатие кнопки
-		if(~BUTTON_PIN & _BV(BUTTON)){
-			if(btnNoiseTimer==0 && !btnPressed){
-				btnNoiseTimer = BTN_NOIS_REDUCE;
-			}
-			// Если кнопку держат нажатой долго - перейти в режим получения адреса
-			if(btnPressTimer > BTN_SHORT_PRESS_TIME){
-				initRadioAddress();
-			}
+HACK_LED_PORT ^= _BV(HACK_LED_PIN);
+
+		// Перезагрузиться, если счетчик отсутствия проверок сенсора достиг критичной величины
+		if(notMeasuredCnt > NEED_RESET_AFTER){
+			cli();
+			canSleep = 0;
+			wdt_reset();
+			WDTCSR |= _BV(WDE) | _BV(WDCE);
+			WDTCSR = _BV(WDE);		// Enable reset (and disable interrupt) and prescaler is 16ms
+			wdt_reset();
+			sei();
+			_delay_ms(17);
 		}
-		else{
-			// Если кнопка сочтена нажатой и была отпущена - обработать время нажатия
-			if(btnPressed && !pressedForResetAlarm){
-				// Если кнопка была нажата коротко
-				if(btnPressTimer<BTN_SHORT_PRESS_TIME){
-					LED_PORT |= _BV(LED_PIN);
-					uart_puts("Default level reinitializing.\r");
-					mode = 1;
-					_delay_ms(1000);
-				}
-			}
-			btnNoiseTimer = 0;
-			btnPressed = 0;
-			pressedForResetAlarm = 0;
-		}*/
+
+		if(needHandleWatchdog){
+			// Обработать все то, что должно было сделать прерывание Watchdog'а
+			cli();
+			needHandleWatchdog = 0;
+			sei();
+			handleWatchDog();
+		}
+
+		if(needHandleTimer0){
+			// Обработать то, что должно было быть сделано прерыванием TIMER0
+			cli();
+			needHandleTimer0 = 0;
+			handleTimer0();
+			sei();
+		}
 
 		// Обработка нажатой кнопки
 		if(btnPressed){
@@ -485,9 +599,14 @@ test = 0;
 			}
 		}
 
+		// Обновить флаг "Есть внешнее питание"
+		hasExternalPower = EXTERNAL_POWER_PIN & _BV(EXTERNAL_POWER);
+
+#ifndef NRF_DISABLED
 		// Пришли данные
 		if(dataReceived == 1)
 		{
+			URAT_PRINT_STR("NRF data received\r");
 //hackLedCnt = 4000;
 			//mirf_read(buffer);
 			// Проверить, что это команда для данного устройства
@@ -498,7 +617,10 @@ test = 0;
 				{
 					if(buffer[2] == 0){		// Получение адреса уст-ва
 						assignAddress(buffer);
+						cli();
+						modeChanged = 1;
 						mode = 2;
+						sei();
 					}
 				}
 				else{
@@ -509,8 +631,10 @@ test = 0;
 								ignoreAlarm();
 							}
 							else{
+								cli();
 								modeChanged = 1;
 								mode = 1;
+								sei();
 							}
 							break;
 						case 2:				// Переопределение параметров
@@ -521,8 +645,10 @@ test = 0;
 			}
 			dataReceived = 0;
 		}
+#endif
 
 		if(adcUpdated){
+			URAT_PRINT_STR("Update VCC\r");
 			vcc = 112 * 255 / adc_data;
 			cli();
 			adcUpdated = 0;
@@ -540,6 +666,7 @@ test = 0;
 				lowBat = 1;
 			else
 				lowBat = 0;
+			URAT_PRINT_STR("VCC updated\r");
 		}
 
 		// Если уровень батареи низкий и подошло время сообщить об этом хозяину
@@ -552,6 +679,7 @@ test = 0;
 #ifndef WIRE1_DISABLED
 		// Если есть внешнее питание - отзываться на запросы 1-wire, как подчиненный
 		if(hasExternalPower==1){
+			URAT_PRINT_STR("Listen 1-wire\r");
 			char cmd = wire1_listener();
 			// If this is "set default" command (check with reversed value)
 			if(cmd==0b10100110){
@@ -566,62 +694,133 @@ test = 0;
 		}
 #endif
 
+		if(!txTimeoutCnt){
+			cli();
+			sendInProgress = 0;
+			sei();
+		}
+
+
+#ifndef NRF_DISABLED
+		// Обработка очереди передачи по NRF
+		// Передать следующую позиию в очереди, если она не пуста и 
+/*		if(txQueue_notEmpty() && !sendInProgress){
+			switch(txQueue_getNext()){
+				case 1:
+					prepareStatus();
+					startSend();
+					break;
+				case 2:
+					preparePowerStatus();
+					startSend();
+					break;
+			}
+		}*/
+		if(txMode && !sendInProgress){
+			switch(txMode){
+				case 1:
+					preparePowerStatus();
+					startSend();
+					txMode = 0;
+					break;
+				case 2:
+					prepareStatus();
+					startSend();
+					txMode = 1;
+					break;
+				default:
+					txMode = 0;
+					break;
+			}
+		}			
+#endif
 
 		// Основные режимы работы
 		switch(mode){
 			case 1:		// Замер фоновой частоты
 				if(modeChanged){
-#ifdef UART_ENABLED
-					uart_puts("Default level reinitializing.\r");
-#endif
+					URAT_PRINT_STR("Default level reinitializing.\r");
 					//LED_PORT |= _BV(LED_PIN);
 					startLed(ENDLESS_LED_CYCLE, ENDLESS_LED_PULSE);
-					_delay_ms(1500);
+					_delay_ms(3000);
 					modeChanged = 0;
 				}
 				if(!measureFrequency()){
-					defaultFrequency = lastFrequency;
-					// Вычислить и запомнить порог срабатывания, при превышении которого нужно поднять тревогу
-					unsigned long tmp = defaultFrequency;
-					tmp *= (100 - treshold);
-					tmp = tmp / 100; // Вроде работает, когда вот так растянуто по строчкам
-					//unsigned long tmp = defaultFrequency * (1-0.05); // Работает
-					defaultFrequency = tmp;
-					//defaultFrequency = defaultFrequency * 0.95;		// Прикручивает плавающую точку - вылезает за 8кБ
-					// Погасить светодиод
-					//LED_PORT &= ~_BV(LED_PIN);
-					led_cycle = 0;
-					// Отправить данные в UART
-#ifdef UART_ENABLED
-					uart_puts("DefaultFrequency: ");
-					utoa(defaultFrequency, res, 10);
-					uart_puts(res);
-					uart_putc('\r');
-#endif
-#ifndef WIRE1_DISABLED
-					// Пнуть подчиненных в 1-wire, чтобы они тоже сохранили текущий уровень, как фоновый и сохранить маску отозвавшихся
-					wire1_slaves = wire1_setDefault();
-#endif
+					// Если измеренное значение похоже на правду
+					if(lastFrequency>100){
+						cli();
+						notMeasuredCnt = 0;
+						sei();
+						alarmCnt = 0;
 
-					// Перейти в режим мониторинга
-					mode = 2;
-					modeChanged = 1;
+						URAT_PRINT_STR("Default level is ready.\r");
+						defaultFrequency = lastFrequency;
+						// Вычислить и запомнить порог срабатывания, при превышении которого нужно поднять тревогу
+						unsigned long tmp = defaultFrequency;
+						tmp *= (100 - treshold);
+						tmp = tmp / 100; // Вроде работает, когда вот так растянуто по строчкам
+						//unsigned long tmp = defaultFrequency * (1-0.05); // Работает
+						defaultFrequency = tmp;
+						//defaultFrequency = defaultFrequency * 0.95;		// Прикручивает плавающую точку - вылезает за 8кБ
+						// Погасить светодиод
+						//LED_PORT &= ~_BV(LED_PIN);
+						led_cycle = 0;
+						// Отправить данные в UART
+						UART_PRINT_DEFAULT_FREQ(defaultFrequency);
+	#ifndef WIRE1_DISABLED
+						WIRE1_POWER_PORT &= ~_BV(WIRE1_POWER);
+						// Пнуть подчиненных в 1-wire, чтобы они тоже сохранили текущий уровень, как фоновый и сохранить маску отозвавшихся
+						wire1_slaves = wire1_setDefault();
+						WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
+	#endif
+
+						// Перейти в режим мониторинга
+						mode = 2;
+						modeChanged = 1;
+
+					}
+					else{
+						// Если намерили слишком мало - включить тревогу
+						alarmCnt = ALARM_MIN_CNT * 2;
+						if(led_cnt_max!=LED_ALARM_PULSE)
+							startLed(ENDLESS_LED_CYCLE, LED_ALARM_PULSE);
+					}
 				}
+#ifdef UART_ENABLED
+else{
+	uart_puts("Wait for default level.\r");
+	_delay_ms(10);
+}
+#endif
 				break;
 			case 2:		// Контроль протечки
-				if(modeChanged)
+				if(modeChanged){
 					modeChanged = 0;
+					URAT_PRINT_STR("Start sensor check\r");
+				}
 				if(!measureFrequency()){
 #ifndef WIRE1_DISABLED
 					// Проверить подчиненных 1-wire
+					WIRE1_POWER_PORT &= ~_BV(WIRE1_POWER);
 					wire1_last_status = wire1_checkAlarmStatus();
+					WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
 #endif
+					// Если измеренное значение похоже на правду
+					if(lastFrequency>100){
+						// Сбросить счетчик, который ведет к перезагрузке
+						cli();
+						notMeasuredCnt = 0;
+						sei();
+					}
+					else{
+						// Если намерили слишком мало - включить тревогу
+						alarmCnt = ALARM_MIN_CNT * 2;
+					}
 					// Если здесь или у подчиненных течет
 					if((lastFrequency < defaultFrequency || wire1_last_status!=0) && alarmIgnoreCnt==0){
 						canSleep = 0;
 						if(alarmCnt<ALARM_MIN_CNT*2){
 							alarmCnt++;
-							//LED_PORT |= _BV(LED_PIN);
 						}
 						// Если кол-во превышений фоновой частоты превысило порог - обявить тревогу
 						if(alarmCnt>ALARM_MIN_CNT){
@@ -631,152 +830,235 @@ test = 0;
 							// Начать мигать светодиодом, если еще не начали
 							if(led_cnt_max!=LED_ALARM_PULSE)
 								startLed(ENDLESS_LED_CYCLE, LED_ALARM_PULSE);
-#ifdef UART_ENABLED
-							uart_puts("!!! ALARM !!!");
-							uart_puts(")\r");
-#endif
+							URAT_PRINT_STR("!!! ALARM !!!\r");
 						}
 					}
 					else{
-						if(alarmCnt!=0)
+						if(alarmCnt!=0){
+							cli();
 							alarmCnt--;
+							sei();
+						}
 						else{
 							// Выключить светодиод
-//							LED_PORT &= ~_BV(LED_PIN);
 							led_cycle = 0;
 							// Если все спокойно (тревоги нет или она закончилась) можно и поспать
-							if(alarmCnt==0)
+							if(!alarmCnt)
 								canSleep = 1;
 						}
 					}
 
-#ifdef UART_ENABLED
-					//uart_putc('.');
-					// TEST Вывод текущей частоты
-					utoa(lastFrequency, res, 10);
-					uart_puts(res);
-					uart_puts(" (");
-					utoa(defaultFrequency, res, 10);
-					uart_puts(res);
-					if(alarmCnt<ALARM_MIN_CNT){
-						uart_puts(") Vcc: ");
-						utoa(vcc, res, 10);
-						uart_puts(res);
-					}
-					else
-						uart_putc(')');
-					//uart_putc(' ');
-					//uart_putc(adc_data);
-					uart_putc('\r');
-#endif
+					uart_printCurFrequency(lastFrequency, defaultFrequency, vcc);
 
-					// Отправка по радио
-					canSendStatus = 1;
-					canSendPower = 1;
-				}
-				if(canSendStatus==1 && sendInProgress==0){
-					sendStatus();
-					canSendStatus = 0;
-				}
-				if(canSendPower==1 && sendInProgress==0){
-					sendPowerStatus();
-					canSendPower = 0;
+
+#ifndef NRF_DISABLED
+					// Отправка по радио текущего статуса (только если пришло время его передачи)
+					if(isMirfAvailable){
+						if(!txPauseCnt){
+							cli();
+							// Очистить NRF от всего передаваемого										
+							//mirf_flush_tx();
+							//mirf_reset_tx();
+							// Инициировать новый отсчет таймера паузы между передачами
+							if(alarmCnt)
+								txPauseCnt = 6500;	// Передавать раз в секунду
+							else
+								txPauseCnt = 26000;	// Передавать раз в 4 секунды
+							//txQueue_add(1);
+							//txQueue_add(2);
+							txMode = 2;
+							sei();
+						}
+					}
+#endif
 				}
 				break;
 			// Запрос адреса в радиосети
 			case 3:
 				if(modeChanged){
-#ifdef UART_ENABLED
-					uart_puts("Wait for address...\r");
-#endif
+					URAT_PRINT_STR("Wait for address...\r");
 					dev_address[0] = rand();
 					dev_address[1] = rand();
 					modeChanged = 0;
 					startLed(ENDLESS_LED_CYCLE, LED_ADDRESS_REQ_PULSE);
 				}
-				if(initRadioAddress()!=0){
+				if(initRadioAddress()!=0 || !isMirfAvailable){
+					// Адрес устройства
+					sendBuf[0] = dev_address[0];
+					sendBuf[1] = dev_address[1];
 					led_cycle = 0;
 					mode = 2;
 				}
 				break;
 			case 4:
-				// Пустой режим для тестирования NRF24
 				break;
 			default:
+				cli();
+				mode = 2;
+				modeChanged = 1;
+				sei();
 				break;
 		}
 
 		if(canSleep){
-			hasExternalPower = EXTERNAL_POWER_PIN & _BV(EXTERNAL_POWER);
 			// Спать только если нет внешнего питания и все передали
-			if(hasExternalPower==0 && canSendStatus==0 && canSendPower==0){
-				// Заглушить NRF24
-				//mirf_write_register(CONFIG, mirf_read_register(CONFIG) & ~(1<<PWR_UP));
+			//if(!hasExternalPower && !txQueue_notEmpty() && !sendInProgress){
+			if(!hasExternalPower && !txMode && !sendInProgress){
+#ifdef UART_ENABLED
+	uart_puts("Before sleep\r");
+	_delay_ms(50);
+#endif
+				cli();
+				disableAllBeforeSleep();
+				sei();
+
+				// Уснуть
+				sleep_enable();
+				sleep_cpu();
 
 				cli();
-				// Отключить прерывание от NRF24
-				EIMSK &= ~_BV(INT1);
-				// Отключить светодиоды и динамик
-				LED_PORT &= ~_BV(LED_PIN);
-				HACK_LED_PORT &= ~_BV(HACK_LED_PIN);
-				BUZZER_PORT &= ~_BV(BUZZER_PIN);
-
-				sleep_enable();
-				sei();
-				sleep_cpu();
+				// Проснуться
 				sleep_disable();
-				// Мигнуть, что мы еще живы
-				//LED_PORT |= _BV(LED_PIN);
-				//_delay_ms(50);
-				//LED_PORT &= ~_BV(LED_PIN);
-				startLed(1, 600);
 				canSleep = 0;
-				EIMSK |= _BV(INT1);
-				// Пробудить NRF24
-				//mirf_write_register(CONFIG, mirf_read_register(CONFIG) | (1<<PWR_UP));
-				_delay_ms(2);
+
+				enableAllAfterSleep();
+
+				// Мигнуть, что мы еще живы
+				LED_PORT |= _BV(LED_PIN);
+				_delay_ms(50);
+				LED_PORT &= ~_BV(LED_PIN);
+				//startLed(1, 600);
+
+				// Позволить снова передать статус по радио
+				txPauseCnt = 0;
+				//txQueue_clear();
+				txMode = 0;
+
+				sei();
+				if(isMirfAvailable){
+					mirf_flush_tx();
+					mirf_reset_tx();
+				}
+
 			}
 			else{
-//hackLedCnt = 900;
-// Переделать, чтобы сканирование 1-wire шло почаще, а отправка в эфир - реже
-				_delay_ms(100);
+				//_delay_ms(100);
+				URAT_PRINT_STR("Can't sleep\r");
 			}
 		}
 
-/*
-#ifdef UART_ENABLED
-// TEST вывод текущей частоты
-		cli();
-		tmpFrequency = curFrequency;
-		sei();
-		if(tmpFrequency>0){
-			//LED_PORT ^= _BV(LED_PIN);
-			uart_puts("tmpFrequency: ");
-			utoa(tmpFrequency, res, 10);
-			uart_puts(res);
-			uart_puts(" - ovfCnt: ");
-			utoa(ovfCnt, res, 10);
-			uart_puts(res);			
-			uart_putc('\r');
-			_delay_ms(100);
-		}
-#endif
-*/
 	}
 }
 
-void prepareSendBuf(uint8_t *sendBuf, char cmd){
+void disableAllBeforeSleep(){
 
-	// Адрес устройства
-	sendBuf[0] = dev_address[0];
-	sendBuf[1] = dev_address[1];
+#ifndef NRF_DISABLED
+	if(isMirfAvailable){
+		// Заглушить NRF24
+		mirf_power_down;
+		// Отключить прерывание от NRF24
+		EIMSK &= ~_BV(INT1);
+	}
+	SPCR &= ~_BV(SPE);
+#endif
 
-	// Код операции
-	sendBuf[2] = cmd;
+	// Отключить светодиоды и динамик
+	startLed(0, 0);
+	hackLedCnt = 0;
+	LED_PORT &= ~_BV(LED_PIN);
+	HACK_LED_PORT &= ~_BV(HACK_LED_PIN);
+	BUZZER_PORT &= ~_BV(BUZZER_PIN);
+	/*DDRB = 0x00;
+	PORTB = 0xFF;
+	DDRC = 0x00;
+	PORTC = 0xFF;
+	DDRD = 0x00;
+	PORTD = 0xFF;*/
+
+	// Отключить таймер/счетчик сенсора
+	TIMSK0 &= ~(1<<TOIE0); // Включить прерывание по переполнению таймера
+	TCNT1 = 0x00;
+	//TIMSK1 &= ~(1<<ICIE1) | (1<<TOIE1);		// Включить прерывание по переполнению таймера и по внешнему сигналу
+
+	// Отключить сенсор (555)
+	POWER555_PORT &= ~_BV(POWER555_PIN);
+
+	// Отключить ADC
+	ADCSRA &= ~(1<<ADEN) & ~(1<<ADIE); 
+	//ADMUX |= (1<<MUX3)|(1<<MUX2)|(1<<MUX1)|(1<<MUX0);
 
 }
 
-void prepareStatus(uint8_t *sendBuf){
+void enableAllAfterSleep(){
+
+	// Включить порты
+	// Init sensor input
+	//SENSOR_DDR &= ~_BV(SENSOR);
+	//SENSOR_PORT |= _BV(SENSOR);
+
+	POWER555_DDR |= _BV(POWER555_PIN);
+	POWER555_PORT |= _BV(POWER555_PIN);
+
+	// Initialize LED (PC5)
+	LED_DDR |= _BV(LED_PIN);
+	LED_PORT &= ~_BV(LED_PIN);
+
+	LED_DDR |= _BV(HACK_LED_PIN);
+	LED_PORT &= ~_BV(HACK_LED_PIN);
+
+	// Initialize button (PD2)
+	//BUTTON_DDR &= ~(_BV(BUTTON) | _BV(NRF_IRQ));
+	//BUTTON_PORT |= _BV(BUTTON) | _BV(NRF_IRQ);
+
+	// Initialize buzzer (BUZZER_PIN)
+	BUZZER_DDR |= _BV(BUZZER_PIN);
+	BUZZER_PORT &= ~_BV(BUZZER_PIN);
+
+	// Initialize external power signal
+	//EXTERNAL_POWER_DDR &= ~_BV(EXTERNAL_POWER);
+	//EXTERNAL_POWER_PORT &= ~_BV(EXTERNAL_POWER);
+
+#ifndef WIRE1_DISABLED
+	// wire-1 address
+	WIRE1_ADDR_DDR &= ~(_BV(WIRE1_ADDR_1) | _BV(WIRE1_ADDR_2));
+	WIRE1_ADDR_PORT |= _BV(WIRE1_ADDR_1) | _BV(WIRE1_ADDR_2);
+
+	WIRE1_POWER_DDR |= _BV(WIRE1_POWER);
+	WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
+#endif
+	
+
+	// Включить ADC
+	//ADMUX |= (1<<MUX3)|(1<<MUX2)|(1<<MUX1); //Set the Band Gap voltage as the ADC input
+	ADCSRA |= (1<<ADEN)|(1<<ADIE)|(1<<ADIF); 
+	//ADC_init();
+
+	// Включить сенсор (555)
+	POWER555_PORT |= _BV(POWER555_PIN);
+
+	// Включить таймер/счетчик сенсора
+	TCNT0 = TIMER;
+	TIMSK0 |= (1<<TOIE0); // Включить прерывание по переполнению таймера
+	TCNT1=0x00;
+	//TIMSK1 |= (1<<ICIE1) | (1<<TOIE1);		// Включить прерывание по переполнению таймера и по внешнему сигналу
+
+#ifndef NRF_DISABLED
+	SPCR |= _BV(SPE);
+	if(isMirfAvailable){
+		// Включить прерывания от NRF24
+		EIMSK |= _BV(INT1);
+
+		// Пробудить NRF24
+		mirf_setTX;
+		//_delay_ms(2);
+	}
+#endif
+
+}
+
+void prepareStatus(){
+
+	sendBuf[2] = 0x01;
 
 	// Текущая частота
 	sendBuf[3] = (lastFrequency>>8);
@@ -808,39 +1090,12 @@ void prepareStatus(uint8_t *sendBuf){
 	sendBuf[14] = alarm_ignore_time;
 
 	sendBuf[15] = wire1_last_status;
-	sendBuf[16] = 0;
-	
-}
-
-void sendStatus(){
-
-	if(sendInProgress == 1)
-		return;
-
-	sendInProgress = 1;
-
-	uint8_t sendBuf[mirf_PAYLOAD];
-
-	prepareSendBuf(sendBuf, 0x01);
-	prepareStatus(sendBuf);
-
-	mirf_write(sendBuf);
 
 }
 
-void sendPowerStatus(){
+void preparePowerStatus(){
 
-	if(sendInProgress == 1)
-		return;
-	//while(sendInProgress == 1){
-	//	_delay_ms(10);
-	//}
-
-	sendInProgress = 1;
-
-	uint8_t sendBuf[mirf_PAYLOAD];
-
-	prepareSendBuf(sendBuf, 0x02);
+	sendBuf[2] = 0x02;
 
 	// Минимальный уровень заряда батареи
 	sendBuf[3] = (min_bat_level>>8);
@@ -849,11 +1104,50 @@ void sendPowerStatus(){
 	// Флаг наличия внешнего питания
 	sendBuf[5] = hasExternalPower;
 
+	// Качество передачи по радио (содержимое OBSERVER_TX на момент окончания предыдущей передачи)
+	sendBuf[6] = txQuality;
+
+
+}
+
+// Отправить сообщение о перезагрузке и причину
+void prepareResetStatus(char status){
+
+	sendBuf[2] = 0x03;
+	sendBuf[3] = status;
+
+}
+
+/*void prepareSendBuf(uint8_t *sendBuf, char cmd){
+
+	// Адрес устройства
+	sendBuf[0] = dev_address[0];
+	sendBuf[1] = dev_address[1];
+
+	// Код операции
+	sendBuf[2] = cmd;
+
+}*/
+
+void startSend(){
+
+	if(!isMirfAvailable || sendInProgress)
+		return;
+
+	//prepareSendBuf(sendBuf, cmd);
+
+	cli();
+	txTimeoutCnt = 600;		// Ждать окончания передачи 0.1 сек
+	sendInProgress = 1;
+	sei();
 	mirf_write(sendBuf);
 
 }
 
 int initRadioAddress(){
+
+	if(!isMirfAvailable)
+		return;
 
 	if(addressRequestPause==0){
 		sendAddressRequest();
@@ -876,52 +1170,4 @@ void startLed(int cycles, int ledCnt)
 	led_cycle = (cycles * 2) - 1;
 	led_cnt_max = ledCnt;
 	led_cnt = led_cnt_max;
-}
-
-void readParamsFromMem(){
-
-	treshold = eeprom_read_byte(&treshold_stored);
-	min_bat_level = eeprom_read_word(&min_bat_level_stored);
-	alarm_ignore_time = eeprom_read_word(&alarm_ignore_time_stored);
-	alarm_time_limit = eeprom_read_word(&alarm_time_limit_stored);;
-
-	verifyParams();
-
-}
-
-void verifyParams(){
-	if(treshold>50)					// Разница меджду фоновой частотой и частотой тревоги не больше 50%
-		treshold = 50;
-	if(min_bat_level > 450)			// Минимальный уровень батареи не ниже 4.5 В
-		min_bat_level = 450;
-	if(alarm_ignore_time > 900)		// Отключение тревоги не больше чем на 60 минут
-		alarm_ignore_time = 900;
-}
-
-void setParams(uint8_t *data){
-
-	treshold = data[3];
-
-	min_bat_level = data[4];
-	min_bat_level <<=8;
-	min_bat_level |= data[5];
-
-	alarm_ignore_time = data[6];
-	alarm_ignore_time <<=8;
-	alarm_ignore_time |= data[7];
-
-	alarm_time_limit = data[8];
-	alarm_time_limit <<=8;
-	alarm_time_limit |= data[9];
-
-	verifyParams();
-	saveParams();
-
-}
-
-void saveParams(){
-	eeprom_write_byte(&treshold_stored, treshold);
-	eeprom_write_word (&min_bat_level_stored, min_bat_level);
-	eeprom_write_word (&alarm_ignore_time_stored, alarm_ignore_time);
-	eeprom_write_word (&alarm_time_limit_stored, alarm_time_limit);
 }
