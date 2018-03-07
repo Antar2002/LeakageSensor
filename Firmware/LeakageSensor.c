@@ -1,5 +1,5 @@
 //#define UART_ENABLED
-#define WIRE1_DISABLED
+//#define WIRE1_DISABLED
 //#define NRF_DISABLED
 
 #include <avr/io.h>
@@ -446,7 +446,7 @@ int main(void)
 	//GIMSK |= _BV(INT0);
 	EICRA = 0x00;
 	//EICRA |= _BV(ISC00) | _BV(ISC11);	// Any level of INT0 change raise interrupt, falling edge on INT1 raise interupt
-	EICRA |= _BV(ISC00);	// Any level of INT0 change raise interrupt, low level on INT1 raise interupt (ISC11=0 and ISC10=0)
+	EICRA |= _BV(ISC00);	// Any level of INT0 change raise interrupt
 	EIMSK = 0x00;
 
 #ifndef NRF_DISABLED
@@ -466,10 +466,8 @@ int main(void)
 	// Disable Analog Comparator
 	ACSR &= ~_BV(ACIE);
 	ACSR |= _BV(ACD);
-	DIDR1 = 0xFF;
 
 	ADC_init();
-	DIDR0 = 0xFF;
 
 
 #ifndef WIRE1_DISABLED
@@ -767,12 +765,12 @@ HACK_LED_PORT ^= _BV(HACK_LED_PIN);
 						led_cycle = 0;
 						// Отправить данные в UART
 						UART_PRINT_DEFAULT_FREQ(defaultFrequency);
-	#ifndef WIRE1_DISABLED
+#ifndef WIRE1_DISABLED
 						WIRE1_POWER_PORT &= ~_BV(WIRE1_POWER);
 						// Пнуть подчиненных в 1-wire, чтобы они тоже сохранили текущий уровень, как фоновый и сохранить маску отозвавшихся
 						wire1_slaves = wire1_setDefault();
 						WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
-	#endif
+#endif
 
 						// Перейти в режим мониторинга
 						mode = 2;
@@ -1026,7 +1024,19 @@ void enableAllAfterSleep(){
 	WIRE1_POWER_DDR |= _BV(WIRE1_POWER);
 	WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
 #endif
-	
+
+#ifndef NRF_DISABLED
+	SPCR |= _BV(SPE);
+	if(isMirfAvailable){
+		// Включить прерывания от NRF24
+		EIMSK |= _BV(INT1);
+
+		// Пробудить NRF24
+		mirf_setTX;
+		//_delay_ms(2);
+		_delay_us(100);
+	}
+#endif	
 
 	// Включить ADC
 	//ADMUX |= (1<<MUX3)|(1<<MUX2)|(1<<MUX1); //Set the Band Gap voltage as the ADC input
@@ -1041,18 +1051,6 @@ void enableAllAfterSleep(){
 	TIMSK0 |= (1<<TOIE0); // Включить прерывание по переполнению таймера
 	TCNT1=0x00;
 	//TIMSK1 |= (1<<ICIE1) | (1<<TOIE1);		// Включить прерывание по переполнению таймера и по внешнему сигналу
-
-#ifndef NRF_DISABLED
-	SPCR |= _BV(SPE);
-	if(isMirfAvailable){
-		// Включить прерывания от NRF24
-		EIMSK |= _BV(INT1);
-
-		// Пробудить NRF24
-		mirf_setTX;
-		//_delay_ms(2);
-	}
-#endif
 
 }
 

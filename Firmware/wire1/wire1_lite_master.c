@@ -17,7 +17,7 @@ char wire1_setDefault(){
 	// Collect responose
 	char resp = wire1_getResponse();
 
-	return resp;
+	return ~resp;
 }
 
 char wire1_checkAlarmStatus(){
@@ -31,7 +31,7 @@ char wire1_checkAlarmStatus(){
 	// Collect responose
 	char resp = wire1_getResponse();
 
-	return resp;
+	return ~resp;
 }
 
 
@@ -45,8 +45,8 @@ char wire1_sendReset(){
 	WIRE1_PORT_TO_RECEIVE;
 
 	// Wait for start of "present" impuls
-	sigLength = wire1_waitForImpulsStart(20);
-	if(sigLength>=20)
+	sigLength = wire1_waitForImpulsStart(30);
+	if(sigLength>=30)
 		return 0;
 
 	// Wait for end of "present" impuls
@@ -57,7 +57,7 @@ char wire1_sendReset(){
 	while((~WIRE1_PIN & _BV(WIRE1)) && sigLength<35){
 		sigLength = WIRE1_TIMER_CNT;
 	}
-	if(sigLength>20 || sigLength<17)
+	if(sigLength>30 || sigLength<17)
 		return 0;
 
 	return 1;

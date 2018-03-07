@@ -16,7 +16,15 @@ void wire1_init(){
 || defined(__AVR_ATmega88A__) \
 || defined(__AVR_ATmega88P__) \
 || defined(__AVR_ATmega88PA__)
-	TCCR2B = _BV(CS21) | _BV(CS20);	// CLK/32		434.7826 kHz (overflow 1698.37 per sec)
+#if F_CPU == 10000000
+	TCCR2B = _BV(CS21) | _BV(CS20);	// CLK/32		434.7826 kHz = 2.3uS (overflow 1698.37 per sec)
+#endif
+#if F_CPU == 2000000
+	TCCR2B = _BV(CS21);		// CLK/8		250 kHz (overflow 976,5625 per sec)
+#endif
+#ifndef F_CPU
+#error "F_CPU not defined. It's required for 1-wire lib"
+#endif
 #endif
 
 	//TINY24

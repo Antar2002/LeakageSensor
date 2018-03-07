@@ -12,7 +12,7 @@ int wire1_waitForImpulsStart(char timeout){
 	WIRE1_TIMER_CNT = 0;
 	sei();
 
-	while((WIRE1_PIN & _BV(WIRE1)) && sigLength<20){
+	while((WIRE1_PIN & _BV(WIRE1)) && sigLength<timeout){
 		sigLength = WIRE1_TIMER_CNT;
 	}
 
