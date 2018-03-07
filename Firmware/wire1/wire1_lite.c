@@ -8,7 +8,9 @@ void wire1_init(){
 #if defined(__AVR_ATxmega16A4__) \
 || defined(__AVR_ATxmega16A4U__) \
 || defined(__AVR_ATxmega16D4__)
+#if F_CPU == 10000000  || F_CPU == 8000000
 	TCCR2 = _BV(CS21) | _BV(CS20);
+#endif
 #endif
 
 	//Mega88
@@ -16,11 +18,11 @@ void wire1_init(){
 || defined(__AVR_ATmega88A__) \
 || defined(__AVR_ATmega88P__) \
 || defined(__AVR_ATmega88PA__)
-#if F_CPU == 10000000
+#if F_CPU == 10000000 || F_CPU == 8000000
 	TCCR2B = _BV(CS21) | _BV(CS20);	// CLK/32		434.7826 kHz = 2.3uS (overflow 1698.37 per sec)
 #endif
-#if F_CPU == 2000000
-	TCCR2B = _BV(CS21);		// CLK/8		250 kHz (overflow 976,5625 per sec)
+#if F_CPU == 1000000
+	TCCR2B = _BV(CS21);		// CLK/8		125 kHz (overflow 488,28125 per sec)
 #endif
 #ifndef F_CPU
 #error "F_CPU not defined. It's required for 1-wire lib"

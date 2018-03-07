@@ -4,6 +4,7 @@
 
 #include "wire1_shared.h"
 #include "wire1_lite_slave.h"
+#include "wire1_timing.h"
 
 char wire1_listener(){
 
@@ -18,12 +19,12 @@ char wire1_listener(){
 	sei();
 
 	sigLength = 0;
-	while(~WIRE1_PIN & _BV(WIRE1) && WIRE1_TIMER_CNT<160){
+	while(~WIRE1_PIN & _BV(WIRE1) && WIRE1_TIMER_CNT < WAIT_FOR_RESET_END){
 		sigLength = WIRE1_TIMER_CNT;
 	}
 
 	// If this is not "reset" (480uS) - exit
-	if(sigLength<147 || sigLength>153)
+	if(sigLength<RESET_SIG_MIN || sigLength>RESET_SIG_MAX)
 		return 0xFF;
 
 	// Send "present"
@@ -39,7 +40,7 @@ char wire1_listener(){
 	cli();
 	WIRE1_TIMER_CNT = 0;
 	sei();
-	while(i<8 && sigLength<27){
+	while(i < 8 && sigLength < MAX_RC_BIT_LENGTH){
 		sigLength = WIRE1_TIMER_CNT;
 		if((~WIRE1_PIN & _BV(WIRE1)) && startTime==0){
 			startTime = sigLength;
@@ -57,7 +58,7 @@ char wire1_listener(){
 		}
 	}
 
-	if(sigLength>=27)
+	if(sigLength >= MAX_RC_BIT_LENGTH)
 		return 0xFF;
 
 /*for(i=0;i<8;i++){
@@ -87,7 +88,7 @@ void sendByteSlave(char resp){
 	WIRE1_TIMER_CNT = 0;
 	sei();
 
-	while(i<8 && WIRE1_TIMER_CNT<70){
+	while(i < 8 && WIRE1_TIMER_CNT < MAX_TX_BIT_LENGTH){
 		if(~WIRE1_PIN & _BV(WIRE1) && !startTime){
 			// Reset timer
 			startTime = 1;
