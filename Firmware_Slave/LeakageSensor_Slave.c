@@ -1,3 +1,5 @@
+//#define UART_ENABLED
+
 #include <avr/eeprom.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -8,6 +10,15 @@
 #include <util/delay.h>
 #include "LeakageSensor_Slave.h"
 #include "D:\_Projects\MK\LeakageSensor\Firmware\wire1\wire1_lite.h"
+
+#ifdef UART_ENABLED
+#include "D:\_Projects\MK\LeakageSensor\Firmware\uart.h"
+#endif
+
+#define UART_BAUD_RATE 56000
+#define UART_RX_BUFFER_SIZE 40
+#define UART_TX_BUFFER_SIZE 40
+
 
 uint8_t mcusr_mirror __attribute__ ((section (".noinit")));
 
@@ -210,7 +221,6 @@ void wire1_addr_init(){
 	offset |=  (WIRE1_ADDR_PIN & _BV(WIRE1_ADDR_2))>>WIRE1_ADDR_2-1;
 
 	wire1_address = (1<<offset);
-//wire1_address = 0b00100000;
 
 }
 
@@ -257,15 +267,24 @@ int main(void)
 	// Load default frequency from EEPROM
 	defaultFrequency = eeprom_read_word(&default_frequency_stored);
 
-	if(defaultFrequency == 65535)
+	if(defaultFrequency > 5000)
 		mode = 1;
 	else
 		mode = 2;
 	modeChanged = 1;
 
+#ifdef UART_ENABLED
+		// Init uart
+		uart_init(UART_BAUD_SELECT(UART_BAUD_RATE,F_CPU));
+#endif
 
 	sei();
 
+#ifdef UART_ENABLED
+	uart_puts("Start level: ");
+	uart_printInt(defaultFrequency);
+	uart_putc('\r');
+#endif
 
 
 	treshold = TRESHOLD;
@@ -299,7 +318,7 @@ PORTB &= ~_BV(PB0);
 					if(lastFrequency>100){
 						defaultFrequency = lastFrequency;
 						// Вычислить и запомнить порог срабатывания, при превышении которого нужно поднять тревогу
-						unsigned long tmp = defaultFrequency;
+						unsigned long volatile tmp = defaultFrequency;
 						tmp *= (100 - treshold);
 						tmp = tmp / 100; // Вроде работает, когда вот так растянуто по строчкам
 						//unsigned long tmp = defaultFrequency * (1-0.05); // Работает
@@ -307,6 +326,14 @@ PORTB &= ~_BV(PB0);
 
 						// Save this value to EEPROM
 						eeprom_write_word (&default_frequency_stored, defaultFrequency);
+
+#ifdef UART_ENABLED
+						uart_puts("Def updated: ");
+						uart_printInt(defaultFrequency);
+						uart_putc('-');
+						uart_printInt(lastFrequency);
+						uart_putc('\r');
+#endif
 
 						led_cycle = 0;
 
@@ -321,14 +348,21 @@ PORTB &= ~_BV(PB0);
 					modeChanged = 0;
 				}
 				if(!measureFrequency()){
+					startLed(1, 10);
+#ifdef UART_ENABLED
+						uart_printInt(lastFrequency);
+						uart_puts(" - ");
+						uart_printInt(defaultFrequency);
+						uart_putc('\r');
+#endif
 					if(lastFrequency < defaultFrequency){
-startLed(ENDLESS_LED_CYCLE, ENDLESS_LED_PULSE);
+//startLed(ENDLESS_LED_CYCLE, ENDLESS_LED_PULSE);
 						if(alarmCnt<ALARM_MIN_CNT*2){
 							alarmCnt++;
 						}
 						if(alarmCnt>ALARM_MIN_CNT){
-//							if(led_cnt_max!=LED_ALARM_PULSE)
-//								startLed(ENDLESS_LED_CYCLE, LED_ALARM_PULSE);
+							if(led_cnt_max!=LED_ALARM_PULSE)
+								startLed(ENDLESS_LED_CYCLE, LED_ALARM_PULSE);
 						}
 					}
 					else{
@@ -341,7 +375,7 @@ startLed(ENDLESS_LED_CYCLE, ENDLESS_LED_PULSE);
 							// Выключить светодиод
 							led_cycle = 0;
 						}
-led_cycle = 0;
+//led_cycle = 0;
 					}
 				}
 				break;
@@ -356,4 +390,10 @@ void startLed(int cycles, int ledCnt)
 	led_cycle = (cycles * 2) - 1;
 	led_cnt_max = ledCnt;
 	led_cnt = led_cnt_max;
+}
+
+void uart_printInt(uint16_t val){
+	char res[5];
+	utoa(val, res, 10);
+	uart_puts(res);
 }

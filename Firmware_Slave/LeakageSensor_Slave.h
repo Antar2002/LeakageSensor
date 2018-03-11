@@ -43,7 +43,7 @@
 #define		IMPULS_MES_TIME	100			// Кол-во переполнений таймера, в течение которого буду считаться импульсы
 #define		MES_COUNT		10			// Кол-во замеров частоты для усреднения
 //#define		TRESHOLD		0.05
-#define		ALARM_MIN_CNT	10			// Кол-во превышений, после которого объявляется тревога (около 6 сек)
+#define		ALARM_MIN_CNT	1			// Кол-во превышений, после которого объявляется тревога (около 6 сек)
 
 #define		TIMER			250			// Период переполнения Timer0 (256-6; OVF = 6510,4Hz)
 
@@ -69,9 +69,9 @@ static volatile char freqUpdated = 0;		// Флаг/признак, что пришло новое измерен
 uint16_t lastFrequency = 0;
 uint16_t defaultFrequency = 0;
 
-volatile char alarmCnt = 0;			// Счетчик превышений порога фоновой частоты
+volatile char alarmCnt = 0;					// Счетчик превышений порога фоновой частоты
 
-char treshold;				// Разница между нормой и текущим уровнем, при которой будет тревога
+char treshold = TRESHOLD;					// Разница между нормой и текущим уровнем, при которой будет тревога
 
 volatile char needHandleTimer0 = 0;
 
@@ -83,3 +83,5 @@ volatile char pressedForResetAlarm = 0; // Флаг/признак того, что кнопку нажимал
 volatile int led_cnt = 0;
 volatile int led_cycle = 0;
 volatile int led_cnt_max = 0;
+
+void uart_printInt(uint16_t val);
