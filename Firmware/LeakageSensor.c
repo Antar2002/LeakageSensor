@@ -473,6 +473,9 @@ int main(void)
 #ifndef WIRE1_DISABLED
 	wire1_init();
 	wire1_addr_init();
+
+	// Включить питание заранее
+	WIRE1_POWER_PORT &= ~_BV(WIRE1_POWER);
 #endif
 
 	sei();
@@ -766,10 +769,14 @@ HACK_LED_PORT ^= _BV(HACK_LED_PIN);
 						// Отправить данные в UART
 						UART_PRINT_DEFAULT_FREQ(defaultFrequency);
 #ifndef WIRE1_DISABLED
-						WIRE1_POWER_PORT &= ~_BV(WIRE1_POWER);
+//						WIRE1_POWER_PORT &= ~_BV(WIRE1_POWER);
 						// Пнуть подчиненных в 1-wire, чтобы они тоже сохранили текущий уровень, как фоновый и сохранить маску отозвавшихся
 						wire1_slaves = wire1_setDefault();
-						WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
+						if(wire1_slaves != 0)
+							_delay_ms(1000);
+
+//						if(!hasExternalPower)
+//							WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
 #endif
 
 						// Перейти в режим мониторинга
@@ -799,9 +806,12 @@ else{
 				if(!measureFrequency()){
 #ifndef WIRE1_DISABLED
 					// Проверить подчиненных 1-wire
-					WIRE1_POWER_PORT &= ~_BV(WIRE1_POWER);
+//					WIRE1_POWER_PORT &= ~_BV(WIRE1_POWER);
+
 					wire1_last_status = wire1_checkAlarmStatus();
-					WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
+
+//					if(!hasExternalPower && !wire1_last_status)
+//						WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
 #endif
 					// Если измеренное значение похоже на правду
 					if(lastFrequency>100){
@@ -815,7 +825,7 @@ else{
 						alarmCnt = ALARM_MIN_CNT * 2;
 					}
 					// Если здесь или у подчиненных течет
-					if((lastFrequency < defaultFrequency || wire1_last_status!=0) && alarmIgnoreCnt==0){
+					if((lastFrequency < defaultFrequency || wire1_last_status) && alarmIgnoreCnt==0){
 						canSleep = 0;
 						if(alarmCnt<ALARM_MIN_CNT*2){
 							alarmCnt++;
@@ -839,7 +849,7 @@ else{
 						}
 						else{
 							// Выключить светодиод
-							led_cycle = 0;
+							turnLedOff();
 							// Если все спокойно (тревоги нет или она закончилась) можно и поспать
 							if(!alarmCnt)
 								canSleep = 1;
@@ -960,6 +970,10 @@ void disableAllBeforeSleep(){
 	SPCR &= ~_BV(SPE);
 #endif
 
+#ifndef WIRE1_DISABLED
+	WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
+#endif
+
 	// Отключить светодиоды и динамик
 	startLed(0, 0);
 	hackLedCnt = 0;
@@ -994,6 +1008,24 @@ void enableAllAfterSleep(){
 	//SENSOR_DDR &= ~_BV(SENSOR);
 	//SENSOR_PORT |= _BV(SENSOR);
 
+#ifndef WIRE1_DISABLED
+	// wire-1 address
+	WIRE1_ADDR_DDR &= ~(_BV(WIRE1_ADDR_1) | _BV(WIRE1_ADDR_2));
+	WIRE1_ADDR_PORT |= _BV(WIRE1_ADDR_1) | _BV(WIRE1_ADDR_2);
+
+	WIRE1_POWER_DDR |= _BV(WIRE1_POWER);
+//	WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
+
+	// Включить питание 1-wire slave
+	WIRE1_POWER_PORT &= ~_BV(WIRE1_POWER);
+	_delay_ms(100);
+
+	// Дать время посчитать тревогу, если есть
+	if(wire1_sendReset())
+		_delay_ms(500);
+#endif
+
+
 	POWER555_DDR |= _BV(POWER555_PIN);
 	POWER555_PORT |= _BV(POWER555_PIN);
 
@@ -1015,15 +1047,6 @@ void enableAllAfterSleep(){
 	// Initialize external power signal
 	//EXTERNAL_POWER_DDR &= ~_BV(EXTERNAL_POWER);
 	//EXTERNAL_POWER_PORT &= ~_BV(EXTERNAL_POWER);
-
-#ifndef WIRE1_DISABLED
-	// wire-1 address
-	WIRE1_ADDR_DDR &= ~(_BV(WIRE1_ADDR_1) | _BV(WIRE1_ADDR_2));
-	WIRE1_ADDR_PORT |= _BV(WIRE1_ADDR_1) | _BV(WIRE1_ADDR_2);
-
-	WIRE1_POWER_DDR |= _BV(WIRE1_POWER);
-	WIRE1_POWER_PORT |= _BV(WIRE1_POWER);
-#endif
 
 #ifndef NRF_DISABLED
 	SPCR |= _BV(SPE);
@@ -1168,4 +1191,10 @@ void startLed(int cycles, int ledCnt)
 	led_cycle = (cycles * 2) - 1;
 	led_cnt_max = ledCnt;
 	led_cnt = led_cnt_max;
+}
+
+void turnLedOff(){
+	led_cycle = 0;
+	led_cnt_max = 0;
+	led_cnt = 0;
 }

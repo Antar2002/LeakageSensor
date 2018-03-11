@@ -167,3 +167,4 @@ int initRadioAddress();
 void ignoreAlarm();
 
 void startLed(int cycles, int ledCnt);
+void turnLedOff();
