@@ -128,7 +128,7 @@ void mirf_config()
 		mirf_write_register(EN_RXADDR, mirf_read_register(EN_RXADDR) | (1<<ERX_P5));
 	#endif
 
-	/*#if mirf_USE_IRQ
+	/*#ifdef mirf_USE_IRQ
 		mirf_write_register(CONFIG, mirf_read_register(CONFIG) & ~(1<<MASK_RX_DR));
 		mirf_write_register(CONFIG, mirf_read_register(CONFIG) & ~(1<<MASK_TX_DS));
 	#endif*/
@@ -277,7 +277,7 @@ void mirf_write(uint8_t *data)
 	mirf_CE_lo;
 
 	//wait for the transmission to stop
-	#if mirf_USE_IRQ == 0
+	#ifndef mirf_USE_IRQ
 		uint8_t breaked = 0;
 		uint8_t tmp = 0;
 		int timeout = 0;
@@ -342,6 +342,10 @@ void mirf_flush_rx()
 
 void mirf_reset(){
 	mirf_write_register(STATUS, (1<<TX_DS)|(1<<MAX_RT)|(1<<RX_DR));
+}
+
+void mirf_reset_rx(){
+	mirf_write_register(STATUS, (1<<RX_DR));
 }
 
 void mirf_reset_tx(){

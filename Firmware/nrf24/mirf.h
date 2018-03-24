@@ -6,6 +6,8 @@
 #define CE  PB1
 #define CSN PB2
 
+#define mirf_USE_IRQ
+
 #define PORT_SPI  PORTB
 #define DDR_SPI   DDRB
 #define SPI_MISO  DDB4
@@ -21,8 +23,8 @@
 #define mirf_PAYLOAD 16 //payload lenght
 
 //default configuration
-#if mirf_USE_IRQ == 1
-	#define mirf_CONFIG ( (1<<EN_CRC) | (0<<CRCO) | (0<<MASK_RX_DR) | (0<<MASK_TX_DS) )
+#ifdef mirf_USE_IRQ
+	#define mirf_CONFIG ( (1<<EN_CRC) | (0<<CRCO) | (0<<MASK_RX_DR) | (0<<MASK_TX_DS) | (0<<MASK_TX_DS) )
 #else
 	#define mirf_CONFIG ( (1<<EN_CRC) | (0<<CRCO) )
 #endif
@@ -36,7 +38,6 @@
 #define mirf_ENABLED_P4 0
 #define mirf_ENABLED_P5 0
 
-#define mirf_USE_IRQ 1
 
 #define mirf_CSN_hi PORTB |=  (1<<CSN);
 #define mirf_CSN_lo PORTB &= ~(1<<CSN);
@@ -75,6 +76,7 @@ extern void mirf_flush_rx();
 extern void afterWriteData(uint8_t status);
 
 extern void mirf_reset();
+extern void mirf_reset_rx();
 extern void mirf_reset_tx();
 extern char mirf_is_available();
 

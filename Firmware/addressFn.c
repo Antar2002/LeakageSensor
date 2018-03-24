@@ -48,19 +48,12 @@ void assignAddress(uint8_t *buffer)
 // Принимать команды для этого устройства или если адрес 0 и уст-во находится в режиме получения адреса
 char checkAddress(uint8_t *buffer)
 {
-	//int sum = 0;
 	for(char i=0;i<2;i++)
 	{
 		//sum += dev_address[i];
-		if((mode == 3 && buffer[i] != dev_address[i]) 
-			//|| (mode == 1 && buffer[i] != 0)
-			)
+		if(buffer[i] != dev_address[i]) 
 			return 0;
 	}
-
-	// Если адрес устройства не задан и оно не находится в режиме получения адреса
-	/*if(mode == 0 && sum == 0)
-		return 0;*/
 
 	return 1;
 }

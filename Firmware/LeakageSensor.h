@@ -10,18 +10,9 @@
 #define		POWER555_PORT		PORTC
 #define		POWER555_PIN		PC4
 
-#define		LED_DDR			DDRC
-#define		LED_PORT		PORTC
-#define		LED_PIN			PC3
-
 #define		BUZZER_DDR		DDRC
 #define		BUZZER_PORT		PORTC
 #define		BUZZER_PIN		PC2
-
-#define		BUTTON_DDR		DDRD
-#define		BUTTON_PORT		PORTD
-#define		BUTTON_PIN		PIND
-#define		BUTTON			PD2			// Must be INTO input
 
 #define		HACK_LED_DDR			DDRC
 #define		HACK_LED_PORT			PORTC
@@ -55,10 +46,6 @@
 #define		ALARM_MIN_CNT	10			// Кол-во превышений, после которого объявляется тревога (около 6 сек)
 
 #define		TIMER			250			// Период переполнения Timer0 (256-6; OVF = 6510,4Hz)
-#define		TIMER_OVF_SEC	916			// Кол-во переполнений Timer0 за 1 секунду (делитель=256; цикл=6)
-
-#define		BTN_NOIS_REDUCE	45			// ~0.05 сек
-#define		BTN_SHORT_PRESS_TIME TIMER_OVF_SEC * 3	// Продолжительность "долгого нажатия на кнопку"
 
 #define		LED_ALARM_PULSE	3000			// Период мигания светодиода при тревоге (в переполнениях Timer0)
 #define		MAX_ALARM_TIME		150		// Максимальная продолжительность игнала тревоги (в сек * 4)
@@ -82,7 +69,7 @@ static volatile uint16_t curFrequency = 0;		// Текущая частота. Заполняется в пр
 //char ovfCnt = 0;				// Счетчик переполнений таймера 1
 //uint16_t freqCnt = 0;			// Счетчик импульсов. Инициализируется MES_COUNT. Когда достигнет 0 - значение таймера запишется в curFrequency
 
-static volatile char modeChanged = 0;		// Флаг смены режима. Как только кто-то меняет режим - взводится до начала обработки режима. 
+//static volatile char modeChanged = 0;		// Флаг смены режима. Как только кто-то меняет режим - взводится до начала обработки режима. 
 							// При начале обработки режима сбрасывается.
 
 static volatile char measureCnt = 0;		// Счетчик замеров частоты. При измерении частоты текущее значение (curFrequency) усредняется пока тикает этот счетчик.
@@ -96,12 +83,7 @@ volatile char needHandleTimer0 = 0;
 
 volatile char alarmCnt = 0;			// Счетчик превышений порога фоновой частоты
 volatile int alarmIgnoreCnt = 0;		// Счетчик времени игнорирования тревоги (тикает в watchdog)
-volatile char pressedForResetAlarm = 0; // Флаг/признак того, что кнопку нажимали, чтобы сбросить тревогу
 volatile int alarmTimeCnt = 0;		// Счетчик времени тревоги (тикает в watchdog)
-
-volatile int btnNoiseTimer = 0;
-volatile char btnPressed = 0;
-volatile int btnPressTimer = 0;
 
 volatile int led_cnt = 0;
 volatile int led_cycle = 0;

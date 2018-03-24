@@ -23,6 +23,7 @@
 #endif
 
 #include "addressFn.h"
+#include "buttonFn.h"
 
 #ifndef WIRE1_DISABLED
 #include "wire1/wire1_lite.h"
@@ -82,42 +83,7 @@ ISR(TIMER0_OVF_vect)
 
 void handleTimer0(){
 
-	// Подавление дребезга кнопки
-	if(btnNoiseTimer>0){
-		btnNoiseTimer--;
-		if(btnNoiseTimer==0){
-			btnPressed = 1;
-			btnPressTimer = 0;
-		}
-	}
-
-	// Обработка нажатой кнопки - считаем продолжительность нажатия
-	if(btnPressed==1){
-		if(btnPressTimer < BTN_SHORT_PRESS_TIME + 2)
-			btnPressTimer++;
-	}
-
-	// Счетчик периода игнорирования перенесен в Watchdog
-	/*timer0OvfSecCnt++;
-	if(timer0OvfSecCnt>TIMER_OVF_SEC){
-		// Если сейчас идет период игнорирования тревоги - уменьшить оставшее время игнорирования на 1
-		if(alarmIgnoreCnt>0)
-			alarmIgnoreCnt--;
-		timer0OvfSecCnt = 0;
-	}*/
-
-
-	// Если сейчас состояние тревоги или низкий уровень заряда батареи	
-	if((alarmCnt>ALARM_MIN_CNT && alarmIgnoreCnt==0) || sndCnt>0){
-		sndFreqCnt++;
-		if(sndFreqCnt>2){
-			BUZZER_PORT ^= _BV(BUZZER_PIN);
-			sndFreqCnt = 0;
-		}
-		if(sndCnt>0)
-			sndCnt--;
-	}
-
+	button_timerProc();
 
 	// Обработка мигания диодом
 	if(led_cnt<=0){
@@ -160,33 +126,16 @@ void handleTimer0(){
 // Обработка кнопки
 ISR(INT0_vect)
 {
-	// Кнопку нажали
-	if(~BUTTON_PIN & _BV(BUTTON)){
-		if(btnNoiseTimer==0 && !btnPressed){
-			btnNoiseTimer = BTN_NOIS_REDUCE;
-		}
-	}
-	// Кнопку отпустили
-	else{
-		// Если кнопка сочтена нажатой и была отпущена - обработать время нажатия
-		if(btnPressed && !pressedForResetAlarm){
-			// Если кнопка была нажата коротко
-			if(btnPressTimer<BTN_SHORT_PRESS_TIME){
-				modeChanged = 1;
-				mode = 1;
-			}
-			else{
-				// Если кнопку держат нажатой долго - перейти в режим получения адреса
-				if(mode!=3){
-					modeChanged = 1;
-					mode = 3;
-				}
-			}
-		}
-		btnNoiseTimer = 0;
-		btnPressed = 0;
-		pressedForResetAlarm = 0;
-	}
+
+	// Кнопка в нажатом состоянии, но отсчет еще не начался
+/*	if((~BUTTON_PIN & _BV(BUTTON)) && !btnPressTimer){
+		btnProcessed = 0;
+		btnPressTimer = 1;
+	}*/
+/*
+// НЕ РАБОТАЕТ
+	if(canSleep && (~BUTTON_PIN & _BV(BUTTON)))
+		btnPressTimer = BTN_NOIS_REDUCE + 1;*/
 }
 
 ISR (WDT_vect)
@@ -257,16 +206,12 @@ test = status;
 			mirf_read(buffer);
 			dataReceived = 1;
 		}
-		//mirf_write_register(STATUS, (1<<RX_DR));
-		//mirf_reset();
-		mirf_write_register(STATUS, mirf_read_register(STATUS) | (1<<RX_DR));
-//		mirf_flush_rx();
-//		sendStatus();
 	}
+
 	// Если это было окончание передачи
 	// TX_DS - передача прошла успешно
 	// MAX_RT - передача провалилась (в TX FIFO остались непереданные данные)
-	else if((status & (1<<TX_DS)) || (status & (1<<MAX_RT))){
+	if((status & (1<<TX_DS)) || (status & (1<<MAX_RT))){
 		txQuality = mirf_read_register(OBSERVE_TX);
 		// Если пакет так и не удалось передать - просигнализировать об этом миганием
 /*		if(status & (1<<MAX_RT)){
@@ -288,6 +233,19 @@ test = status;
 }
 #endif
 
+char receiveRadioData(){
+	uint8_t status = mirf_get_status();
+	if(status & (1<<RX_DR)){
+		if(dataReceived == 0){
+			mirf_read(buffer);
+			dataReceived = 1;
+		}
+		//mirf_reset();
+		mirf_reset_rx();
+		return 1;
+	}
+	return 0;
+}
 
 char measureFrequency(){
 
@@ -360,27 +318,15 @@ void portsInit()
 void timersInit()
 {
 	//Init Timer 0
-	// Mega8 TCCR0
-	//TCCR0 |= (1<<CS00);	// (8 MHz / 256 = 31250)
-	//TCCR0 |= (1<<CS01);	// /8 (1 MHz / 256 = 3906,25)
-	//TCCR0 |= (1<<CS01) | (1<<CS00);	// /64 (156.250 kHz / 256 = 610,3515625)
-	// Mega8 TCCR0 |= (1<<CS02);		// /256 (39,0625 kHz / 256 = 152,588)
 	TCCR0B = (1<<CS02);		// /256 (39,0625 kHz / 256 = 152,588)
-	//TCCR0B |= (1<<CS02) | (1<<CS00);	// /1024 (9375 Hz)
 	TCNT0 = TIMER;
 	TIMSK0 = (1<<TOIE0); // Включить прерывание по переполнению таймера
-	// Mega8 TIMSK |= (1<<TICIE1) | (1<<TOIE1) | (1<<TOIE0);		// Включить прерывание по переполнению таймера и по внешнему сигналу
-	//TIMSK |= (1<<TOIE0);
-
 
 	// Init timer 1 (for sensor frequency measuring)
 	TCCR1A = 0x00;
-	//TCCR1B = (1<<ICNC1) | (1<<ICES1) | (1<<CS10);		// For capture signal using Input Capture Unit of Timemr1
 	TCCR1B = (1<<CS12) | (1<<CS11) | (1<<CS10);
 	TCNT1=0x00;
-	//ICR1=0x00;
 	TIMSK1 = 0x00;
-	//TIMSK1 |= (1<<ICIE1) | (1<<TOIE1);		// Включить прерывание по переполнению таймера и по внешнему сигналу
 }
 
 void WDT_Init()
@@ -388,10 +334,6 @@ void WDT_Init()
 	wdt_reset();
 	wdt_enable(WDTO_4S);
 	WDTCSR |= _BV(WDIE);
-	//WDTCSR = _BV(WDCE) | _BV(WDE);
-	//WDTCSR = 0;
-
-	//WDTCSR = _BV(WDIE) | _BV(WDP3);		// Enable reset, interrupt and prescaler is 4s
 }
 
 void ADC_init() 
@@ -434,10 +376,14 @@ int main(void)
 	uart_init(UART_BAUD_SELECT(UART_BAUD_RATE,F_CPU) );
 #endif
 
+#ifndef NRF_DISABLED
 	// Init NRF24
 	mirf_init();
 	_delay_ms(50);
 	isMirfAvailable = mirf_is_available();
+#else
+	isMirfAvailable = 0;
+#endif
 
 	// Init INT0 & INT1
 	//MCUCR &= ~_BV(ISC00) & ~_BV(ISC01);
@@ -478,6 +424,8 @@ int main(void)
 	WIRE1_POWER_PORT &= ~_BV(WIRE1_POWER);
 #endif
 
+	button_init();
+
 	sei();
 
 #ifndef NRF_DISABLED
@@ -508,8 +456,7 @@ int main(void)
 	URAT_PRINT_STR("Leakage Sensor v0.1\r\r");
 
 	cli();
-	led_cnt = 0;
-	//LED_PORT &= ~_BV(LED_PIN);
+	turnLedOff();
 	
 	// Переменные иницализируются при объявлении
 /*	freqImpulsFlag = 0;
@@ -574,17 +521,34 @@ HACK_LED_PORT ^= _BV(HACK_LED_PIN);
 			sei();
 		}
 
+		// Обработка звука
+		// Если сейчас состояние тревоги или низкий уровень заряда батареи	
+		if((alarmCnt>ALARM_MIN_CNT && alarmIgnoreCnt==0) || sndCnt>0){
+			sndFreqCnt++;
+			// Для HCM1206A нужно 2400Гц
+			if(sndFreqCnt>11){
+				BUZZER_PORT ^= _BV(BUZZER_PIN);
+				sndFreqCnt = 0;
+			}
+			if(sndCnt>0)
+				sndCnt--;
+		}
+
+		cli();
+		button_handleButton();
+		sei();
+
 		// Обработка нажатой кнопки
 		if(btnPressed){
+			cli();
 			// Если была тревога - выключить и начать игнорировать
 			if(alarmCnt>ALARM_MIN_CNT){
 				ignoreAlarm();
-				pressedForResetAlarm = 1;
+				btnProcessed = 1;
 			}
 			else{
 				// Если кнопку держат нажатой долго - перейти в режим получения адреса, сбросить параметры и таймер игнорирования
-				if(btnPressTimer > BTN_SHORT_PRESS_TIME && mode!=3){
-
+				if(btnPressTimer > BTN_SHORT_PRESS_TIME && mode!=3 && !btnProcessed){
 					treshold = TRESHOLD;
 					min_bat_level = MIN_BAT_LEVEL;
 					alarm_ignore_time = ALARM_IGNORE_TIME;
@@ -593,11 +557,13 @@ HACK_LED_PORT ^= _BV(HACK_LED_PIN);
 					saveParams();
 
 					alarmIgnoreCnt = 0;
-						
+
 					modeChanged = 1;
 					mode = 3;
+					btnProcessed = 1;
 				}
 			}
+			sei();
 		}
 
 		// Обновить флаг "Есть внешнее питание"
@@ -613,35 +579,34 @@ HACK_LED_PORT ^= _BV(HACK_LED_PIN);
 			// Проверить, что это команда для данного устройства
 			if(checkAddress(buffer))
 			{
-				// Assign address
-				if(mode==3)
-				{
-					if(buffer[2] == 0){		// Получение адреса уст-ва
-						assignAddress(buffer);
-						cli();
-						modeChanged = 1;
-						mode = 2;
-						sei();
-					}
-				}
-				else{
-					// Process command
-					switch(buffer[2]){
-						case 1:				// Аналог короткого нажатия кнопки
-							if(alarmCnt>ALARM_MIN_CNT){
-								ignoreAlarm();
-							}
-							else{
-								cli();
-								modeChanged = 1;
-								mode = 1;
-								sei();
-							}
-							break;
-						case 2:				// Переопределение параметров
-							setParams(buffer);
-							break;
-					}
+				// Process command
+				switch(buffer[2]){
+					// Assign address
+					case 0:
+						if(mode==3){
+							cli();
+							assignAddress(buffer);
+							sendBuf[0] = dev_address[0];
+							sendBuf[1] = dev_address[1];
+							modeChanged = 1;
+							mode = 2;
+							sei();
+						}
+						break;
+					case 1:				// Аналог короткого нажатия кнопки
+						if(alarmCnt>ALARM_MIN_CNT){
+							ignoreAlarm();
+						}
+						else{
+							cli();
+							modeChanged = 1;
+							mode = 1;
+							sei();
+						}
+						break;
+					case 2:				// Переопределение параметров
+						setParams(buffer);
+						break;
 				}
 			}
 			dataReceived = 0;
@@ -890,12 +855,15 @@ else{
 					modeChanged = 0;
 					startLed(ENDLESS_LED_CYCLE, LED_ADDRESS_REQ_PULSE);
 				}
-				if(initRadioAddress()!=0 || !isMirfAvailable){
+				if(!isMirfAvailable){
 					// Адрес устройства
 					sendBuf[0] = dev_address[0];
 					sendBuf[1] = dev_address[1];
 					led_cycle = 0;
 					mode = 2;
+				}
+				else{
+					initRadioAddress();
 				}
 				break;
 			case 4:
@@ -911,7 +879,8 @@ else{
 		if(canSleep){
 			// Спать только если нет внешнего питания и все передали
 			//if(!hasExternalPower && !txQueue_notEmpty() && !sendInProgress){
-			if(!hasExternalPower && !txMode && !sendInProgress){
+			if(!hasExternalPower && !txMode && !sendInProgress
+				&& !btnPressed && btnPressTimer==0){
 #ifdef UART_ENABLED
 	uart_puts("Before sleep\r");
 	_delay_ms(50);
@@ -929,11 +898,21 @@ else{
 				sleep_disable();
 				canSleep = 0;
 
-				enableAllAfterSleep();
-
+				// Initialize LED (PC5)
+				LED_DDR |= _BV(LED_PIN);
 				// Мигнуть, что мы еще живы
 				LED_PORT |= _BV(LED_PIN);
-				_delay_ms(50);
+
+				// Начать обработку кнопки как можно раньше
+				// ЗАРАБОТАЛО!!!
+				cli();
+				button_handleButton();
+				sei();
+
+				enableAllAfterSleep();
+
+				// Также задержка для NRF - иначе он перестает передавать через некоторое время
+//				_delay_ms(50);
 				LED_PORT &= ~_BV(LED_PIN);
 				//startLed(1, 600);
 
@@ -943,6 +922,7 @@ else{
 				txMode = 0;
 
 				sei();
+
 				if(isMirfAvailable){
 					mirf_flush_tx();
 					mirf_reset_tx();
@@ -1029,9 +1009,6 @@ void enableAllAfterSleep(){
 	POWER555_DDR |= _BV(POWER555_PIN);
 	POWER555_PORT |= _BV(POWER555_PIN);
 
-	// Initialize LED (PC5)
-	LED_DDR |= _BV(LED_PIN);
-	LED_PORT &= ~_BV(LED_PIN);
 
 	LED_DDR |= _BV(HACK_LED_PIN);
 	LED_PORT &= ~_BV(HACK_LED_PIN);
@@ -1167,9 +1144,6 @@ void startSend(){
 
 int initRadioAddress(){
 
-	if(!isMirfAvailable)
-		return;
-
 	if(addressRequestPause==0){
 		sendAddressRequest();
 		addressRequestPause = 1200;
@@ -1197,4 +1171,5 @@ void turnLedOff(){
 	led_cycle = 0;
 	led_cnt_max = 0;
 	led_cnt = 0;
+	LED_PORT &= ~_BV(LED_PIN);
 }
